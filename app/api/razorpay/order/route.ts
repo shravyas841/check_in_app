@@ -6,6 +6,7 @@ import { enforceRateLimit } from '@/lib/rate-limit';
 import { generateTicketToken } from '@/lib/ticket-security';
 import { EVENT_WITH_PRICING_SELECT, EVENT_SELECT } from '@/lib/event-select';
 import { sendTicketEmail } from '@/lib/ticket-email';
+import { quoteTicketType } from '@/lib/ticket-types';
 
 // Validate Razorpay credentials on startup
 const ENV_RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID;
@@ -94,7 +95,7 @@ export async function POST(request: NextRequest) {
 
         const foundTickets = await prisma.ticket.findMany({
             where: { id: { in: requestedTicketIds } },
-            include: { Event: { select: EVENT_WITH_PRICING_SELECT } },
+            include: { Event: { select: EVENT_WITH_PRICING_SELECT }, TicketType: true },
         });
 
         if (foundTickets.length !== requestedTicketIds.length) {
@@ -112,6 +113,9 @@ export async function POST(request: NextRequest) {
         const invalidTicket = tickets.find((ticket) => ticket.eventId !== eventId);
         if (invalidTicket) {
             return NextResponse.json({ error: 'All tickets in an order must belong to the same event' }, { status: 400 });
+        }
+        if (tickets.some((ticket) => ticket.ticketTypeId !== primaryTicket.ticketTypeId)) {
+            return NextResponse.json({ error: 'All tickets in an order must use the same ticket type' }, { status: 400 });
         }
 
         const nonPendingTicket = tickets.find((ticket) => ticket.status !== 'pending');
@@ -146,7 +150,11 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Ticket quantity mismatch' }, { status: 400 });
         }
 
-        const unitPrice = calculateTicketUnitPrice(primaryTicket.Event as any);
+        if (primaryTicket.TicketType) {
+            try { quoteTicketType(primaryTicket.TicketType, ticketCount, Math.max(0, primaryTicket.Event.capacity - paidTicketCount)); }
+            catch (reason) { return NextResponse.json({ error: reason instanceof Error ? reason.message : 'Ticket type is unavailable' }, { status: 409 }); }
+        }
+        const unitPrice = primaryTicket.TicketType?.price ?? calculateTicketUnitPrice(primaryTicket.Event as any);
         const subtotal = unitPrice * ticketCount;
         const promo = await validatePromoForOrder(promoCode, eventId, ticketCount, primaryTicket.email);
         const discountAmount = calculatePromoDiscount(subtotal, promo);
@@ -196,6 +204,15 @@ export async function POST(request: NextRequest) {
 
                     if (capacityUpdate.count !== 1) {
                         throw createRequestError('Not enough tickets are available for this event', 409);
+                    }
+
+                    if (primaryTicket.ticketTypeId) {
+                        const type = await tx.ticketType.findUnique({ where: { id: primaryTicket.ticketTypeId }, select: { capacity: true } });
+                        const typeUpdate = await tx.ticketType.updateMany({
+                            where: { id: primaryTicket.ticketTypeId, active: true, soldCount: { lte: (type?.capacity ?? 0) - paidNow.length } },
+                            data: { soldCount: { increment: paidNow.length } },
+                        });
+                        if (typeUpdate.count !== 1) throw createRequestError('This ticket type is sold out', 409);
                     }
 
                     if (promo) {

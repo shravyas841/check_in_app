@@ -38,6 +38,8 @@ import CheckInPolicyManager from '@/components/CheckInPolicyManager';
 import CheckInOperationsDashboard from '@/components/CheckInOperationsDashboard';
 import EventSettingsManager from '@/components/EventSettingsManager';
 import PaymentRecoveryQueue from '@/components/admin/PaymentRecoveryQueue';
+import TicketTypeManager from '@/components/admin/TicketTypeManager';
+import BackgroundJobQueue from '@/components/admin/BackgroundJobQueue';
 
 const PAID_LIKE_STATUSES = new Set(['paid', 'partially_refunded']);
 const isPaidLikeTicket = (ticket: { status?: string }) => PAID_LIKE_STATUSES.has(ticket.status || '');
@@ -2035,7 +2037,9 @@ export default function AdminPage({ defaultTab }: { defaultTab?: AdminTabKey } =
                             </div>
 
                             {events.length > 0 && <div className="space-y-3"><div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><h3 className="font-semibold text-white">Manual check-in governance</h3><p className="text-sm text-zinc-500">Global permission plus per-event organizer approval.</p></div><select value={sessionEventId || events[0].id} onChange={(e) => setSessionEventId(e.target.value)} className="rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-white">{events.map(event => <option key={event.id} value={event.id}>{event.name}</option>)}</select></div><CheckInPolicyManager eventId={sessionEventId || events[0].id} isAdmin /><EventSettingsManager eventId={sessionEventId || events[0].id} isAdmin /></div>}
+                            {events.length > 0 && <TicketTypeManager events={events} />}
                             <PaymentRecoveryQueue />
+                            <BackgroundJobQueue />
 
                             {/* Maintenance Message */}
                             <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">

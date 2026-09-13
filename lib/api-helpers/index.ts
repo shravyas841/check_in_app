@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { NextRequest, NextResponse } from 'next/server';
+import { randomUUID } from 'node:crypto';
 
 /**
  * Standardized API response helpers. Wrap a handler so that:
@@ -59,6 +60,7 @@ const ROLE_SETS: Record<string, readonly string[]> = {
 
 export function respond(handler: Handler, options: Options = {}) {
     return async (req: NextRequest, ctx: { params: any }) => {
+        const requestId = req.headers.get('x-request-id')?.slice(0, 100) || randomUUID();
         try {
                 if (!options.public) {
                 const { getSession, hasRole } = await import('@/lib/auth');
@@ -71,12 +73,14 @@ export function respond(handler: Handler, options: Options = {}) {
                     }
                 }
             }
-            return await handler(req, ctx);
+            const response = await handler(req, ctx);
+            response.headers.set('x-request-id', requestId);
+            return response;
         } catch (err) {
             if (err instanceof ApiError) {
                 return NextResponse.json(
                     { success: false, error: err.message, code: err.code || (err.status >= 500 ? 'DATABASE_ERROR' : 'REQUEST_ERROR'), ...(err.details ? { details: err.details } : {}) },
-                    { status: err.status },
+                    { status: err.status, headers: { 'x-request-id': requestId } },
                 );
             }
             try {
@@ -91,7 +95,7 @@ export function respond(handler: Handler, options: Options = {}) {
             } catch {
                 console.error('[api]', err);
             }
-            return NextResponse.json({ success: false, error: 'Internal server error', code: 'DATABASE_ERROR' }, { status: 500 });
+            return NextResponse.json({ success: false, error: 'Internal server error', code: 'DATABASE_ERROR', requestId }, { status: 500, headers: { 'x-request-id': requestId } });
         }
     };
 }

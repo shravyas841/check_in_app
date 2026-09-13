@@ -16,6 +16,8 @@ interface TicketItem {
     amountPaid?: number | null;
     netAmount?: number | null;
     createdAt: string;
+    ticketType?: { name: string } | null;
+    deliveryHistory?: { id: string; success: boolean; createdAt: string }[];
     event?: {
         id: string;
         name: string;
@@ -181,6 +183,7 @@ export default function MyTicketsPage() {
                                             </span>
                                         )}
                                         <span>{money(t.netAmount)}</span>
+                                        {t.ticketType?.name && <span>{t.ticketType.name}</span>}
                                     </div>
                                 </div>
                             </div>
@@ -191,6 +194,7 @@ export default function MyTicketsPage() {
                                 >
                                     View ticket <ArrowRight className="w-3.5 h-3.5" />
                                 </Link>
+                                {['paid', 'checked_in', 'partially_refunded', 'refunded'].includes(t.lifecycleStatus) && <a href={`/api/me/tickets/${encodeURIComponent(t.id)}/invoice`} className="interactive-control px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-white text-sm flex items-center gap-1.5"><Download className="w-3.5 h-3.5" /> Receipt</a>}
                                 {t.lifecycleStatus !== 'refunded' && t.lifecycleStatus !== 'cancelled' && (
                                     <button
                                         onClick={() => resendTicket(t.id)}

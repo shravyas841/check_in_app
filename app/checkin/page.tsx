@@ -109,6 +109,27 @@ function CheckinPageContent({ defaultTab, defaultEventId }: { defaultTab?: Check
       .catch(() => setCheckInPolicy(null));
   }, [eventId]);
 
+  useEffect(() => {
+    if (!eventId || !deviceId || !user?.id) return;
+    const sendHeartbeat = () => {
+      void fetch('/api/checkin/heartbeat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          eventId,
+          deviceId,
+          deviceName: deviceName || undefined,
+          networkStatus: navigator.onLine ? 'online' : 'offline',
+          cameraStatus: activeTab === 'scanner' ? 'active' : 'inactive',
+        }),
+        keepalive: true,
+      }).catch(() => undefined);
+    };
+    sendHeartbeat();
+    const timer = window.setInterval(sendHeartbeat, 30_000);
+    return () => window.clearInterval(timer);
+  }, [activeTab, deviceId, deviceName, eventId, user?.id]);
+
   // Pre-loaded error audio for failed check-ins
   const errorAudioRef = useRef<HTMLAudioElement | null>(null);
   useEffect(() => {

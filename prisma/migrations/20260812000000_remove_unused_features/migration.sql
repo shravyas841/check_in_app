@@ -1,0 +1,3 @@
+-- Historical marker: the removed application features had no persisted schema
+-- objects in the canonical database, so this migration intentionally performs
+-- no database operation.

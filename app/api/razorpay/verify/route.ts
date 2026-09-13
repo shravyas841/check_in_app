@@ -86,7 +86,7 @@ export async function POST(request: NextRequest) {
 
         const orderTickets = await prisma.ticket.findMany({
             where: { razorpayOrderId: razorpay_order_id },
-            include: { Event: { select: EVENT_WITH_PRICING_SELECT } },
+            include: { Event: { select: EVENT_WITH_PRICING_SELECT }, TicketType: true },
             orderBy: { createdAt: 'asc' },
         });
 
@@ -130,7 +130,7 @@ export async function POST(request: NextRequest) {
             const updated: any[] = [];
             const paidNow: typeof orderTickets = [];
             const estimatedSubtotal = orderTickets.reduce((sum, ticket) => (
-                sum + (ticket.grossAmount || calculateTicketUnitPrice(ticket.Event as any, ticket.createdAt))
+                sum + (ticket.grossAmount || ticket.TicketType?.price || calculateTicketUnitPrice(ticket.Event as any, ticket.createdAt))
             ), 0);
             const totalDiscount = Math.max(0, estimatedSubtotal - paidTotal);
 
@@ -150,7 +150,7 @@ export async function POST(request: NextRequest) {
                     continue;
                 }
 
-                const grossAmount = ticket.grossAmount || calculateTicketUnitPrice(ticket.Event as any, ticket.createdAt);
+                const grossAmount = ticket.grossAmount || ticket.TicketType?.price || calculateTicketUnitPrice(ticket.Event as any, ticket.createdAt);
                 const discountAmount = ticket.discountAmount || allocatePaidAmount(totalDiscount, orderTickets.length, index);
                 const updateResult = await tx.ticket.updateMany({
                     where: { id: ticket.id, status: 'pending' },
@@ -192,6 +192,16 @@ export async function POST(request: NextRequest) {
 
                 if (capacityUpdate.count !== 1) {
                     throw createRequestError('Not enough tickets are available for this event', 409);
+                }
+
+                const typeCounts = paidNow.reduce<Map<string, number>>((counts, ticket) => {
+                    if (ticket.ticketTypeId) counts.set(ticket.ticketTypeId, (counts.get(ticket.ticketTypeId) || 0) + 1);
+                    return counts;
+                }, new Map());
+                for (const [ticketTypeId, count] of typeCounts) {
+                    const type = await tx.ticketType.findUnique({ where: { id: ticketTypeId }, select: { capacity: true } });
+                    const typeUpdate = await tx.ticketType.updateMany({ where: { id: ticketTypeId, active: true, soldCount: { lte: (type?.capacity ?? 0) - count } }, data: { soldCount: { increment: count } } });
+                    if (typeUpdate.count !== 1) throw createRequestError('This ticket type is sold out', 409);
                 }
 
                 const promoGroups = paidNow.reduce<Record<string, typeof paidNow>>((groups, ticket) => {
@@ -278,7 +288,7 @@ export async function POST(request: NextRequest) {
         });
     } catch (error: any) {
         console.error('Payment verification failed:', error);
-        if (gatewayConfirmed) {
+        if (gatewayConfirmed && request.headers.get('x-recovery-worker') !== '1') {
             await enqueuePaymentRecovery({
                 operation: 'payment_verification', ...recoveryContext,
                 payload: { orderId: recoveryContext.orderId || null, paymentId: recoveryContext.paymentId || null, ticketId: recoveryContext.ticketId || null, signature: recoverySignature },

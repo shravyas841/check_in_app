@@ -7,6 +7,7 @@ import { getTicketFinancials, getTicketLifecycleStatus } from '@/lib/ticket-life
 import { EVENT_SELECT } from '@/lib/event-select';
 import { paginationMeta, parseCursorPagination, parsePagination } from '@/lib/pagination';
 import { apiErrorResponse } from '@/lib/api-helpers';
+import { quoteTicketType } from '@/lib/ticket-types';
 
 function serializeTicket(ticket: any) {
   const { Event, ...ticketData } = ticket;
@@ -68,7 +69,13 @@ export async function POST(req: NextRequest) {
     }
 
     const eventName = event.name;
-    const eventPrice = event.price;
+    const ticketType = body.ticketTypeId ? await prisma.ticketType.findFirst({ where: { id: body.ticketTypeId, eventId: event.id } }) : null;
+    if (body.ticketTypeId && !ticketType) return NextResponse.json({ error: 'Ticket type not found' }, { status: 404 });
+    if (ticketType) {
+      try { quoteTicketType(ticketType, quantity, Math.max(0, event.capacity - event.soldCount)); }
+      catch (reason) { return NextResponse.json({ error: reason instanceof Error ? reason.message : 'Ticket type is unavailable' }, { status: 409 }); }
+    }
+    const eventPrice = ticketType?.price ?? event.price;
 
     // Check if event is active or global sales paused
     // Check Global Sales Pause
@@ -115,6 +122,7 @@ export async function POST(req: NextRequest) {
           phone: attendee.phone || body.phone || null,
           userId: userId || null,
           eventId: body.eventId,
+          ticketTypeId: ticketType?.id || null,
           status: 'pending',
           customAnswers: body.customAnswers || {},
           updatedAt: new Date(),
@@ -131,6 +139,7 @@ export async function POST(req: NextRequest) {
       eventName,
       price: eventPrice,
       totalPrice: eventPrice * ticketIds.length,
+      ticketType: ticketType ? { id: ticketType.id, name: ticketType.name } : null,
     });
   } catch (error) {
     console.error('Error creating ticket(s):', error);

@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { timingSafeStringEqual } from '@/lib/ticket-security';
-import { enqueuePaymentRecovery } from '@/lib/payment-recovery';
+import { enqueueJob } from '@/lib/job-queue';
+import { normalizeRazorpayWebhook, razorpayWebhookKey } from '@/lib/payment-reconciliation';
+import { prisma } from '@/lib/prisma';
+import { randomUUID } from 'node:crypto';
 
 export async function POST(request: NextRequest) {
   const raw = await request.text();
@@ -14,16 +17,23 @@ export async function POST(request: NextRequest) {
     const payload = JSON.parse(raw) as Record<string, any>;
     const event = String(payload.event || '');
     if (!['payment.failed', 'payment.captured', 'order.paid'].includes(event)) return NextResponse.json({ success: true, accepted: true });
-    const payment = payload.payload?.payment?.entity || {};
-    const order = payload.payload?.order?.entity || {};
-    await enqueuePaymentRecovery({
-      operation: `webhook_${event.replace('.', '_')}`,
-      orderId: payment.order_id || order.id || null,
-      paymentId: payment.id || null,
-      payload: { event, orderId: payment.order_id || order.id || null, paymentId: payment.id || null, status: payment.status || null },
-      error: event === 'payment.failed' ? (payment.error_description || 'Razorpay reported a failed payment') : 'Webhook reconciliation requested',
+    const normalized = normalizeRazorpayWebhook(payload);
+    const idempotencyKey = razorpayWebhookKey(raw, signature);
+    const signatureHash = crypto.createHash('sha256').update(signature).digest('hex');
+    const webhook = await prisma.webhookEvent.upsert({
+      where: { provider_idempotencyKey: { provider: 'razorpay', idempotencyKey } },
+      create: { id: randomUUID(), provider: 'razorpay', idempotencyKey, eventType: event, signatureHash, payload },
+      update: {},
     });
-    return NextResponse.json({ success: true, accepted: true });
+    await enqueueJob({
+      type: 'razorpay.webhook.reconcile',
+      payload: { webhookEventId: webhook.id },
+      dedupeKey: `razorpay-webhook:${idempotencyKey}`,
+      eventId: null,
+      ticketId: null,
+      priority: normalized.type === 'payment.captured' ? 10 : 0,
+    });
+    return NextResponse.json({ success: true, accepted: true, duplicate: webhook.status !== 'received' });
   } catch (error) {
     console.error('Razorpay webhook processing failed', error);
     return NextResponse.json({ success: false, error: 'Invalid webhook payload', code: 'VALIDATION_ERROR' }, { status: 400 });

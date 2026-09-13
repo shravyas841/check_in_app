@@ -7,13 +7,15 @@ import { EVENT_SELECT } from '@/lib/event-select';
 export const dynamic = 'force-dynamic';
 
 function serializeTicket(ticket: any) {
-    const { Event, ...t } = ticket;
-    const fin = getTicketFinancials(t, Event?.price || 0);
+    const { Event, TicketType, DeliveryLogs, ...t } = ticket;
+    const fin = getTicketFinancials(t, TicketType?.price || Event?.price || 0);
     return {
         ...t,
         ...fin,
         lifecycleStatus: getTicketLifecycleStatus(t),
         event: Event,
+        ticketType: TicketType,
+        deliveryHistory: DeliveryLogs || [],
     };
 }
 
@@ -41,7 +43,7 @@ export async function GET(_req: NextRequest) {
                     email ? { email } : { id: '__none__' },
                 ],
             },
-            include: { Event: { select: EVENT_SELECT } },
+            include: { Event: { select: EVENT_SELECT }, TicketType: true, DeliveryLogs: { orderBy: { createdAt: 'desc' }, take: 10 } },
             orderBy: { createdAt: 'desc' },
         });
 

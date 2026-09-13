@@ -1,0 +1,6 @@
+{
+  "20260812000000_remove_unused_features": "c3c36a29b13adb714d3b43ceffcd8a4ecf71cec303a153c2c09460e237193485",
+  "20260901120000_add_segments_reminders_templates": "b5624a79dcdfa93f2e0b5c72f467d79ccb14d171c49dc4e7ffd4e739222cf284",
+  "20260904100000_event_publication_payment_recovery": "a744da1289dc0cd8665dd4584efe8b1bccc7b2620104b508c42c74fc506d634b",
+  "20260913120000_reliable_operations": "459cf5c4780089a6d5ee6f6355ad0bd1e1e5c17fe7ac88ac3c7e7390f84afd49"
+}

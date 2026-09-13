@@ -5,6 +5,7 @@ import { useCallback, useState, useEffect } from 'react';
 import { useToast } from './Toaster';
 
 type Event = StoreEvent & { currentPrice?: number }; // allow optional dynamic price while keeping core shape
+type TicketType = { id: string; name: string; description?: string | null; price: number; capacity: number; soldCount: number; minPerOrder: number; maxPerOrder: number; availability: { available: boolean; remaining: number; reason: string | null } };
 
 declare global {
   interface Window {
@@ -55,6 +56,8 @@ export default function TicketForm() {
   const { siteSettings } = useApp();
   const [events, setEvents] = useState<Event[]>([]);
   const [selectedEvent, setSelectedEvent] = useState<string>('');
+  const [ticketTypes, setTicketTypes] = useState<TicketType[]>([]);
+  const [selectedTicketType, setSelectedTicketType] = useState('');
   const [quantity, setQuantity] = useState(1);
   const [attendees, setAttendees] = useState<{ name: string; email: string; phone: string }[]>([{ name: '', email: '', phone: '' }]);
   const [formData, setFormData] = useState({
@@ -109,6 +112,8 @@ export default function TicketForm() {
 
   const getUnitPrice = (event?: Event) => {
     if (!event) return 0;
+    const ticketType = ticketTypes.find((item) => item.id === selectedTicketType);
+    if (ticketType) return ticketType.price;
 
     if (event.earlyBirdEnabled &&
       event.earlyBirdDeadline &&
@@ -221,6 +226,16 @@ export default function TicketForm() {
     fetchEvents();
   }, [fetchEvents]);
 
+  useEffect(() => {
+    if (!selectedEvent) { setTicketTypes([]); setSelectedTicketType(''); return; }
+    let active = true;
+    fetch(`/api/events/${encodeURIComponent(selectedEvent)}/ticket-types`, { cache: 'no-store' })
+      .then(async (response) => response.ok ? response.json() : { items: [] })
+      .then((body) => { if (!active) return; const items = body.items || []; setTicketTypes(items); setSelectedTicketType(items.find((item: TicketType) => item.availability.available)?.id || ''); })
+      .catch(() => { if (active) { setTicketTypes([]); setSelectedTicketType(''); } });
+    return () => { active = false; };
+  }, [selectedEvent]);
+
   const selectedEventData = events.find(e => e.id === selectedEvent);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -274,6 +289,7 @@ export default function TicketForm() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           eventId: selectedEvent,
+          ticketTypeId: selectedTicketType || undefined,
           quantity,
           attendees: attendees.map(a => ({
             name: a.name,
@@ -492,6 +508,8 @@ export default function TicketForm() {
                 </select>
               )}
             </div>
+
+            {ticketTypes.length > 0 && <div><label className="mb-3 block text-sm font-semibold text-[#B3B3B3]">Ticket type <span className="text-[#E11D2E]">*</span></label><div className="grid gap-3 sm:grid-cols-2">{ticketTypes.map((item) => <button type="button" key={item.id} disabled={!item.availability.available} onClick={() => { setSelectedTicketType(item.id); setDiscount(null); setPromoCode(''); handleQuantityChange(Math.max(item.minPerOrder, Math.min(quantity, item.maxPerOrder))); }} className={`rounded-xl border p-4 text-left transition-colors ${selectedTicketType === item.id ? 'border-yellow-300 bg-yellow-300/10' : 'border-[#2A2A2A] bg-[#0D0D0D]'} disabled:opacity-40`}><span className="block font-semibold text-white">{item.name}</span><span className="mt-1 block text-sm text-[#B3B3B3]">₹{(item.price / 100).toFixed(2)} · {item.availability.remaining} remaining</span></button>)}</div></div>}
 
             {/* Event Details */}
             {selectedEventData && (
