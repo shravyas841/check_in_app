@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { parseScanPayload } from '../lib/scan-payload';
 import {
   generateTicketToken,
@@ -20,6 +21,10 @@ import { getEventStart, reminderOffsetLabel, reminderScheduledFor } from '../lib
 import { classifyOfflineSyncResponse } from '../lib/offline-checkin';
 import { paginationMeta, parsePagination } from '../lib/pagination';
 import { readCheckInPolicy } from '../lib/checkin-policy';
+import { calculateJobBackoffMs, nextJobStatus } from '../lib/background-jobs';
+import { getTicketTypeAvailability, quoteTicketType } from '../lib/ticket-types';
+import { normalizeRazorpayWebhook, razorpayWebhookKey } from '../lib/payment-reconciliation';
+import { scannerHealthStatus } from '../lib/scanner-operations';
 
 process.env.TICKET_SECRET_KEY = process.env.TICKET_SECRET_KEY || 'test-ticket-secret';
 
@@ -342,6 +347,56 @@ function testDashboardSafetyHelpers() {
   assert.equal(readCheckInPolicy({ checkInPolicy: { manualCheckInEnabled: true, organizerApprovedEventIds: ['event-1'] } }).manualCheckInEnabled, true);
 }
 
+function testBackgroundJobLifecycle() {
+  assert.equal(calculateJobBackoffMs(1), 60_000);
+  assert.equal(calculateJobBackoffMs(3), 240_000);
+  assert.equal(calculateJobBackoffMs(20), 3_600_000);
+  assert.equal(nextJobStatus({ attempts: 2, maxAttempts: 3, retryable: true }), 'pending');
+  assert.equal(nextJobStatus({ attempts: 3, maxAttempts: 3, retryable: true }), 'dead_letter');
+  assert.equal(nextJobStatus({ attempts: 1, maxAttempts: 3, retryable: false }), 'dead_letter');
+}
+
+function testTicketTypeInventory() {
+  const now = new Date('2026-09-13T12:00:00.000Z');
+  const type = { active: true, salesStart: new Date('2026-09-01T00:00:00.000Z'), salesEnd: new Date('2026-09-30T00:00:00.000Z'), capacity: 50, soldCount: 10, price: 25_000, minPerOrder: 1, maxPerOrder: 4 };
+  assert.deepEqual(getTicketTypeAvailability(type, now), { available: true, remaining: 40, reason: null });
+  assert.deepEqual(quoteTicketType(type, 3, 90, now), { unitPrice: 25_000, quantity: 3, total: 75_000, remainingAfter: 37 });
+  assert.throws(() => quoteTicketType(type, 5, 90, now), /maximum/i);
+  assert.equal(getTicketTypeAvailability({ ...type, soldCount: 50 }, now).reason, 'sold_out');
+  assert.equal(getTicketTypeAvailability({ ...type, salesStart: new Date('2026-09-20T00:00:00.000Z') }, now).reason, 'not_started');
+}
+
+function testPaymentReconciliationHelpers() {
+  const payload = { event: 'payment.captured', payload: { payment: { entity: { id: 'pay_1', order_id: 'order_1', status: 'captured', amount: 50000 } } } };
+  assert.deepEqual(normalizeRazorpayWebhook(payload), { type: 'payment.captured', paymentId: 'pay_1', orderId: 'order_1', status: 'captured', amount: 50000 });
+  assert.equal(razorpayWebhookKey(JSON.stringify(payload), 'signature'), razorpayWebhookKey(JSON.stringify(payload), 'signature'));
+  assert.notEqual(razorpayWebhookKey(JSON.stringify(payload), 'signature'), razorpayWebhookKey(JSON.stringify(payload), 'other'));
+}
+
+function testScannerOperations() {
+  const now = new Date('2026-09-13T12:00:00.000Z');
+  assert.equal(scannerHealthStatus(new Date('2026-09-13T11:59:30.000Z'), now), 'online');
+  assert.equal(scannerHealthStatus(new Date('2026-09-13T11:58:00.000Z'), now), 'degraded');
+  assert.equal(scannerHealthStatus(new Date('2026-09-13T11:50:00.000Z'), now), 'offline');
+  assert.equal(scannerHealthStatus(null, now), 'offline');
+}
+
+function testReliableOperationsSchemaContract() {
+  const schema = readFileSync(new URL('../prisma/schema.prisma', import.meta.url), 'utf8');
+  for (const model of [
+    'BackgroundJob',
+    'WebhookEvent',
+    'PaymentReconciliationAttempt',
+    'TicketType',
+    'ScannerHeartbeat',
+    'StaffShift',
+    'OperationalIncident',
+  ]) {
+    assert.match(schema, new RegExp(`model ${model} \\{`));
+  }
+  assert.match(schema, /ticketTypeId\s+String\?/);
+}
+
 testTicketLifecycleStatus();
 testTicketFinancials();
 testTimedQRToken();
@@ -349,3 +404,8 @@ testScanPayloadEdgeCases();
 testPaidLikeStatuses();
 testContentSanitization();
 testDashboardSafetyHelpers();
+testBackgroundJobLifecycle();
+testTicketTypeInventory();
+testPaymentReconciliationHelpers();
+testScannerOperations();
+testReliableOperationsSchemaContract();

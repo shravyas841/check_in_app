@@ -9,7 +9,14 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "tsx scripts/run-tests.ts",
+    "test:db": "tsx scripts/test-database.ts",
+    "test:e2e": "playwright test",
     "ci": "npm run test && npm run typecheck && npm run lint && npm run build",
+    "db:migrate:check": "tsx scripts/check-migrations.ts",
+    "db:migrate:status": "prisma migrate status",
+    "db:migrate:deploy": "prisma migrate deploy",
+    "db:migrate:dev": "prisma migrate dev",
+    "db:baseline": "tsx scripts/baseline-migrations.ts --apply",
     "postinstall": "prisma generate",
     "backfill:users": "tsx scripts/backfill-clerk-users.ts",
     "backfill:users:dry": "tsx scripts/backfill-clerk-users.ts --dry-run",
@@ -49,6 +56,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/node": "^20",
     "@types/nodemailer": "^7.0.4",
     "@types/qrcode": "^1.5.5",
