@@ -22,4 +22,10 @@ test('background worker rejects requests without the cron secret', async ({ requ
   expect(response.status()).toBe(401);
   await expect(response.json()).resolves.toMatchObject({ success: false, code: 'AUTHENTICATION_REQUIRED' });
 });
+
+test('reminder worker rejects requests with the standard JSON error', async ({ request }) => {
+  const response = await request.get('/api/cron/reminders');
+  expect(response.status()).toBe(401);
+  await expect(response.json()).resolves.toMatchObject({ success: false, code: 'AUTHENTICATION_REQUIRED' });
+});
 });

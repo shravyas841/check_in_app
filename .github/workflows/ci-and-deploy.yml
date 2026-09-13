@@ -25,3 +25,11 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Production smoke tests
+        env:
+          PLAYWRIGHT_BASE_URL: https://eventhub.justshivamm.in
+        run: npm run test:e2e
