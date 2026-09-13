@@ -22,7 +22,19 @@ async function main() {
   const present = new Set(rows.map((row) => row.table_name));
   const missing = requiredTables.filter((table) => !present.has(table));
   if (missing.length) throw new Error(`Schema is not eligible for baseline; missing tables: ${missing.join(', ')}`);
-  for (const migration of baseline) execFileSync('npx', ['prisma', 'migrate', 'resolve', '--applied', migration], { stdio: 'inherit' });
+  let applied = new Set<string>();
+  try {
+    const rows = await prisma.$queryRaw<Array<{ migration_name: string }>>`SELECT migration_name FROM "_prisma_migrations"`;
+    applied = new Set(rows.map((row) => row.migration_name));
+  } catch {
+    // A legacy deployment may not have a migration registry yet. The first
+    // resolve command creates/registers it after the schema eligibility check.
+  }
+  for (const migration of baseline) {
+    if (applied.has(migration)) continue;
+    execFileSync('npx', ['prisma', 'migrate', 'resolve', '--applied', migration], { stdio: 'inherit' });
+    applied.add(migration);
+  }
   console.log('Baseline history registered. Run npm run db:migrate:deploy next.');
 }
 
