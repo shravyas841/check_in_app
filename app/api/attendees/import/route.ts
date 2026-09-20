@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { getSession, hasEventAccess } from '@/lib/auth';
+import { getSession, hasEventAccess, hasRole, ORGANIZER_ROLES } from '@/lib/auth';
+import { isPaidLikeStatus } from '@/lib/ticket-lifecycle';
 
 interface ImportRow {
     name?: string;
@@ -40,6 +41,9 @@ function parseCSV(text: string): ImportRow[] {
 export async function POST(request: NextRequest) {
     const session = await getSession();
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!hasRole(session.user.role, ORGANIZER_ROLES)) {
+        return NextResponse.json({ error: 'Organizer role required' }, { status: 403 });
+    }
 
     const url = new URL(request.url);
     const eventId = url.searchParams.get('eventId');
@@ -67,6 +71,9 @@ export async function POST(request: NextRequest) {
     if (rows.length === 0) {
         return NextResponse.json({ error: 'No rows to import' }, { status: 400 });
     }
+    if (rows.length > 1000) {
+        return NextResponse.json({ error: 'Imports are limited to 1000 rows per request' }, { status: 413 });
+    }
 
     // Validate event and capacity
     const event = await prisma.event.findUnique({
@@ -75,35 +82,58 @@ export async function POST(request: NextRequest) {
     });
     if (!event) return NextResponse.json({ error: 'Event not found' }, { status: 404 });
 
-    const remaining = Math.max(0, event.capacity - event.soldCount);
-    const toInsert = rows.slice(0, remaining);
+    const allowedStatuses = new Set(['pending', 'paid', 'partially_refunded', 'refunded', 'cancelled']);
+    const normalizedRows = rows.filter((row) => Boolean(String(row.name || '').trim())).map((row) => {
+        const amountPaid = typeof row.amountPaid === 'number' && Number.isFinite(row.amountPaid) && row.amountPaid >= 0
+            ? Math.round(row.amountPaid)
+            : event.price;
+        return {
+            ...row,
+            name: String(row.name).trim(),
+            email: typeof row.email === 'string' ? row.email.trim() || undefined : undefined,
+            phone: typeof row.phone === 'string' ? row.phone.trim() || undefined : undefined,
+            amountPaid,
+            status: allowedStatuses.has(row.status || '') ? row.status as string : 'paid',
+        };
+    });
+    const remainingPaid = Math.max(0, event.capacity - event.soldCount);
+    let paidSlots = 0;
+    const toInsert = normalizedRows.filter((row) => {
+        if (!isPaidLikeStatus(row.status)) return true;
+        if (paidSlots >= remainingPaid) return false;
+        paidSlots += 1;
+        return true;
+    });
     const skipped = rows.length - toInsert.length;
+    const paidToInsert = toInsert.filter((row) => isPaidLikeStatus(row.status)).length;
 
-    const created: any[] = [];
-    for (const row of toInsert) {
-        if (!row.name) continue;
-        const ticket = await prisma.ticket.create({
-            data: {
-                id: crypto.randomUUID(),
-                name: row.name,
-                email: row.email,
-                phone: row.phone,
-                eventId,
-                status: row.status || 'paid',
-                amountPaid: row.amountPaid ?? event.price,
-                grossAmount: row.amountPaid ?? event.price,
-                paymentMethod: 'import',
-            },
-        });
-        created.push(ticket);
-    }
+    const created = await prisma.$transaction(async (tx) => {
+        if (paidToInsert > 0) {
+            const capacityUpdate = await tx.event.updateMany({
+                where: { id: eventId, soldCount: { lte: event.capacity - paidToInsert } },
+                data: { soldCount: { increment: paidToInsert } },
+            });
+            if (capacityUpdate.count !== 1) throw new Error('Not enough tickets are available for this event');
+        }
 
-    if (created.length > 0) {
-        await prisma.event.update({
-            where: { id: eventId },
-            data: { soldCount: { increment: created.length } },
-        });
-    }
+        const imported: any[] = [];
+        for (const row of toInsert) {
+            imported.push(await tx.ticket.create({
+                data: {
+                    id: crypto.randomUUID(),
+                    name: row.name,
+                    email: row.email,
+                    phone: row.phone,
+                    eventId,
+                    status: row.status,
+                    amountPaid: row.amountPaid,
+                    grossAmount: row.amountPaid,
+                    paymentMethod: 'import',
+                },
+            }));
+        }
+        return imported;
+    });
 
     return NextResponse.json({
         imported: created.length,

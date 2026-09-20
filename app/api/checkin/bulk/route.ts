@@ -3,7 +3,8 @@ import { prisma } from '@/lib/prisma';
 import { enforceRateLimit } from '@/lib/rate-limit';
 import { getSession, hasEventAccess, hasRole, CHECKIN_ROLES } from '@/lib/auth';
 import { generateAuditChecksum } from '@/lib/qr-security';
-import { isPaidLikeStatus } from '@/lib/ticket-lifecycle';
+import { isPaidLikeStatus, PAID_LIKE_STATUSES } from '@/lib/ticket-lifecycle';
+import { manualCheckInAllowed } from '@/lib/checkin-policy';
 
 export async function POST(request: NextRequest) {
     try {
@@ -18,9 +19,11 @@ export async function POST(request: NextRequest) {
         const body = await request.json();
         const { ticketIds } = body;
 
-        if (!ticketIds || !Array.isArray(ticketIds) || ticketIds.length === 0) {
-            return NextResponse.json({ error: 'Ticket IDs array is required' }, { status: 400 });
+        if (!Array.isArray(ticketIds) || ticketIds.length === 0 || ticketIds.length > 100 || ticketIds.some((id) => typeof id !== 'string' || !id.trim())) {
+            return NextResponse.json({ error: 'Ticket IDs must be a non-empty array of at most 100 IDs' }, { status: 400 });
         }
+
+        const config = await prisma.siteConfig.findUnique({ where: { id: 'default' }, select: { settings: true } });
 
         const results: { ticketId: string; success: boolean; error?: string; name?: string }[] = [];
         for (const ticketId of ticketIds) {
@@ -44,22 +47,28 @@ export async function POST(request: NextRequest) {
                     continue;
                 }
 
+                if (!manualCheckInAllowed(config?.settings, ticket.eventId, session.user.role)) {
+                    results.push({ ticketId, success: false, error: 'Manual check-in is not approved for this event', name: ticket.name });
+                    continue;
+                }
+
                 if (ticket.checkedIn) {
                     results.push({ ticketId, success: false, error: 'Already checked in', name: ticket.name });
                     continue;
                 }
 
                 const timestamp = new Date();
-                await prisma.$transaction([
-                    prisma.ticket.update({
-                        where: { id: ticketId },
+                const updated = await prisma.$transaction(async (tx) => {
+                    const updateResult = await tx.ticket.updateMany({
+                        where: { id: ticketId, checkedIn: false, status: { in: [...PAID_LIKE_STATUSES] } },
                         data: {
                             checkedIn: true,
                             checkedInAt: timestamp,
                             checkedInBy: session.user.id,
                         },
-                    }),
-                    prisma.checkInLog.create({
+                    });
+                    if (updateResult.count !== 1) return false;
+                    await tx.checkInLog.create({
                         data: {
                             ticketId,
                             eventId: ticket.eventId,
@@ -71,8 +80,14 @@ export async function POST(request: NextRequest) {
                             checksum: generateAuditChecksum(ticketId, 'manual_checkin', timestamp.toISOString(), session.user.id),
                             createdAt: timestamp,
                         },
-                    }),
-                ]);
+                    });
+                    return true;
+                });
+
+                if (!updated) {
+                    results.push({ ticketId, success: false, error: 'Ticket was checked in by another scanner', name: ticket.name });
+                    continue;
+                }
 
                 results.push({ ticketId, success: true, name: ticket.name });
             } catch (err: any) {

@@ -8,6 +8,8 @@ import { sendTransactionalEmail, isEmailConfigured } from '@/lib/email';
 import { generateTicketPDF } from '@/lib/pdf-generator';
 import { generateQRCodeBase64 } from '@/lib/qr-generator';
 import { EVENT_SELECT } from '@/lib/event-select';
+import { generateAuditChecksum } from '@/lib/qr-security';
+import { manualCheckInAllowed } from '@/lib/checkin-policy';
 
 export const dynamic = 'force-dynamic';
 
@@ -41,6 +43,10 @@ export const POST = respond(
             where: { id: { in: ticketIds } },
             include: { Event: { select: EVENT_SELECT } },
         });
+
+        const config = action === 'check_in'
+            ? await prisma.siteConfig.findUnique({ where: { id: 'default' }, select: { settings: true } })
+            : null;
 
         if (tickets.length === 0) {
             throw badRequest('No tickets found');
@@ -149,10 +155,34 @@ export const POST = respond(
                         results.push({ id: t.id, ok: false, error: 'Ticket is not paid' });
                         continue;
                     }
-                    await prisma.ticket.update({
-                        where: { id: t.id },
-                        data: { checkedIn: true, checkedInAt: new Date() },
+                    if (!manualCheckInAllowed(config?.settings, t.eventId, session.user.role)) {
+                        results.push({ id: t.id, ok: false, error: 'Manual check-in is not approved for this event' });
+                        continue;
+                    }
+                    const checkedInAt = new Date();
+                    const updated = await prisma.$transaction(async (tx) => {
+                        const result = await tx.ticket.updateMany({
+                            where: { id: t.id, checkedIn: false, status: { in: ['paid', 'partially_refunded'] } },
+                            data: { checkedIn: true, checkedInAt, checkedInBy: session.user.id },
+                        });
+                        if (result.count !== 1) return false;
+                        await tx.checkInLog.create({
+                            data: {
+                                ticketId: t.id,
+                                eventId: t.eventId,
+                                action: 'manual_checkin',
+                                performedBy: session.user.id,
+                                performedRole: session.user.role,
+                                checksum: generateAuditChecksum(t.id, 'manual_checkin', checkedInAt.toISOString(), session.user.id),
+                                createdAt: checkedInAt,
+                            },
+                        });
+                        return true;
                     });
+                    if (!updated) {
+                        results.push({ id: t.id, ok: false, error: 'Already checked in' });
+                        continue;
+                    }
                     results.push({ id: t.id, ok: true });
                 }
             } catch (err) {

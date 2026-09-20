@@ -14,7 +14,20 @@ export async function GET() {
 
         if (!config) return NextResponse.json(null);
 
-        return NextResponse.json({ siteSettings: config.settings });
+        const settings = config.settings && typeof config.settings === 'object' && !Array.isArray(config.settings)
+            ? config.settings as Record<string, unknown>
+            : {};
+        // SiteConfig also stores operational secrets and staff-only controls.
+        // Keep the public storefront contract, but never expose those internal
+        // sections through this unauthenticated branding endpoint.
+        const {
+            scannerDevices: _scannerDevices,
+            checkInPolicy: _checkInPolicy,
+            eventSettings: _eventSettings,
+            ...publicSettings
+        } = settings;
+
+        return NextResponse.json({ siteSettings: publicSettings });
     } catch (error) {
         console.error('Failed to read settings:', error);
         return NextResponse.json(null);

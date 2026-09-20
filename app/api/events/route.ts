@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { calculateDynamicPrice } from '@/lib/pricing';
-import { getSession, hasEventAccess } from '@/lib/auth';
+import { getSession, hasEventAccess, hasRole, ORGANIZER_ROLES } from '@/lib/auth';
 import { logAudit } from '@/lib/logger';
 import { paginationMeta, parsePagination } from '@/lib/pagination';
 
@@ -105,6 +105,9 @@ export async function PATCH(request: Request) {
         const session = await getSession();
         if (!session) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+        if (!hasRole(session.user.role, ORGANIZER_ROLES)) {
+            return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
         }
 
         const body = await request.json();

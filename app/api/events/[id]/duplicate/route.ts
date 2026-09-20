@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
-import { hasEventAccess, getSession } from '@/lib/auth';
+import { hasEventAccess, getSession, hasRole, ORGANIZER_ROLES } from '@/lib/auth';
 import { respond, notFound, forbidden } from '@/lib/api-helpers';
 import { logAudit } from '@/lib/logger';
 
@@ -9,7 +9,7 @@ export const POST = respond(
     async (_request: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
         const { id } = await params;
         const session = await getSession();
-        if (!hasEventAccess(session!, id)) throw forbidden();
+        if (!hasRole(session?.user.role, ORGANIZER_ROLES) || !hasEventAccess(session, id)) throw forbidden();
 
         const source = await prisma.event.findUnique({ where: { id } });
         if (!source) throw notFound('Event not found');

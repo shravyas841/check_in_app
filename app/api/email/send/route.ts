@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sendTicketEmail, TicketEmailData } from '@/lib/ticket-email';
-import { getSession, hasEventAccess } from '@/lib/auth';
+import { getSession, hasEventAccess, hasRole, ORGANIZER_ROLES } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { enforceRateLimit } from '@/lib/rate-limit';
 
@@ -8,6 +8,7 @@ export async function POST(request: NextRequest) {
   try {
     const session = await getSession();
     if (!session) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    if (!hasRole(session.user.role, ORGANIZER_ROLES)) return NextResponse.json({ error: 'Organizer role required' }, { status: 403 });
 
     const body: TicketEmailData = await request.json();
 

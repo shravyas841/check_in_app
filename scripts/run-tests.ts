@@ -20,7 +20,7 @@ import { snapshotEventTemplate, templateChildren, templateEventCreateData } from
 import { getEventStart, reminderOffsetLabel, reminderScheduledFor } from '../lib/reminders';
 import { classifyOfflineSyncResponse } from '../lib/offline-checkin';
 import { paginationMeta, parsePagination } from '../lib/pagination';
-import { readCheckInPolicy } from '../lib/checkin-policy';
+import { manualCheckInAllowed, readCheckInPolicy } from '../lib/checkin-policy';
 import { calculateJobBackoffMs, nextJobStatus } from '../lib/background-jobs';
 import { getTicketTypeAvailability, quoteTicketType } from '../lib/ticket-types';
 import { normalizeRazorpayWebhook, razorpayWebhookKey } from '../lib/payment-reconciliation';
@@ -158,6 +158,17 @@ function testReminderScheduleMath() {
   assert.equal(reminderOffsetLabel(120), '2 hours');
 }
 
+function testManualCheckInPolicy() {
+  const settings = {
+    checkInPolicy: { manualCheckInEnabled: true, organizerApprovedEventIds: ['event-1'] },
+    eventSettings: { 'event-1': { checkIn: { manualEnabled: true } } },
+  };
+  assert.equal(manualCheckInAllowed(settings, 'event-1', 'ORGANIZER'), true);
+  assert.equal(manualCheckInAllowed(settings, 'event-2', 'ORGANIZER'), false);
+  assert.equal(manualCheckInAllowed({ ...settings, eventSettings: { 'event-1': { checkIn: { manualEnabled: false } } } }, 'event-1', 'ORGANIZER'), false);
+  assert.equal(manualCheckInAllowed({}, 'event-2', 'ADMIN'), true);
+}
+
 testScanPayloadParser();
 testTicketSecurity();
 testTimeSlots();
@@ -165,6 +176,7 @@ testPricing();
 testAttendeeSegments();
 testEventTemplates();
 testReminderScheduleMath();
+testManualCheckInPolicy();
 console.log('All tests passed');
 
 // ---------------------------------------------------------------------------

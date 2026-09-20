@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useApp, CATEGORY_COLORS, Event, ScheduleItem, Speaker, Sponsor, TeamMember, TeamRole, ROLE_PERMISSIONS, SiteSettings, Festival, PromoCode, Announcement, NavLink, CustomPage, ThemeSettings, DEFAULT_THEME } from '@/lib/store';
 import { useToast } from '@/components/Toaster';
+import { readJsonResponse } from '@/lib/client-response';
 import { useRouter } from 'next/navigation';
 import AttendeeInsights from '@/components/AttendeeInsights';
 
@@ -117,7 +118,7 @@ export default function AdminPage({ defaultTab }: { defaultTab?: AdminTabKey } =
         if (activeTab !== 'events' || role !== 'ADMIN') return;
         setListLoading(true); setListError('');
         fetch(`/api/dashboard/events?page=${eventPage}&pageSize=12`, { cache: 'no-store' })
-            .then(async res => { const data = await res.json(); if (!res.ok) throw new Error(data.error); setEventPageData(data.items || []); setEventPagination(data.pagination); })
+            .then(async res => { const data = await readJsonResponse<{ items?: Event[]; pagination?: typeof eventPagination; error?: string }>(res, 'Failed to load events'); if (!res.ok) throw new Error(data.error || 'Failed to load events'); setEventPageData(data.items || []); if (data.pagination) setEventPagination(data.pagination); })
             .catch(error => setListError(error instanceof Error ? error.message : 'Failed to load events'))
             .finally(() => setListLoading(false));
     }, [activeTab, eventPage, role, allEvents]);
@@ -131,7 +132,7 @@ export default function AdminPage({ defaultTab }: { defaultTab?: AdminTabKey } =
             if (attendeeSearch.trim()) params.set('q', attendeeSearch.trim());
             if (checkInFilter !== 'all') params.set('checkedIn', checkInFilter === 'checked' ? 'true' : 'false');
             fetch(`/api/admin/tickets?${params}`, { cache: 'no-store' })
-                .then(async res => { const data = await res.json(); if (!res.ok) throw new Error(data.error); setAttendeePageData(data.items || []); setAttendeePagination(data.pagination); })
+                .then(async res => { const data = await readJsonResponse<{ items?: typeof tickets; pagination?: typeof attendeePagination; error?: string }>(res, 'Failed to load attendees'); if (!res.ok) throw new Error(data.error || 'Failed to load attendees'); setAttendeePageData(data.items || []); if (data.pagination) setAttendeePagination(data.pagination); })
                 .catch(error => setListError(error instanceof Error ? error.message : 'Failed to load attendees'))
                 .finally(() => setListLoading(false));
         }, 250);
@@ -203,8 +204,8 @@ export default function AdminPage({ defaultTab }: { defaultTab?: AdminTabKey } =
         const matchesEvent = selectedEvent === 'all' || t.eventId === selectedEvent;
         const matchesSearch = attendeeSearch === '' ||
             t.name.toLowerCase().includes(attendeeSearch.toLowerCase()) ||
-            t.email.toLowerCase().includes(attendeeSearch.toLowerCase()) ||
-            t.phone.includes(attendeeSearch);
+            (t.email || '').toLowerCase().includes(attendeeSearch.toLowerCase()) ||
+            (t.phone || '').includes(attendeeSearch);
         const matchesCheckIn = checkInFilter === 'all' ||
             (checkInFilter === 'checked' && t.checkedIn) ||
             (checkInFilter === 'unchecked' && !t.checkedIn);
@@ -296,7 +297,7 @@ export default function AdminPage({ defaultTab }: { defaultTab?: AdminTabKey } =
         const action = event.publicationStatus === 'published' ? 'unpublish' : 'approve';
         try {
             const res = await fetch(`/api/admin/events/${event.id}/publish`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action }) });
-            const data = await res.json();
+            const data = await readJsonResponse<{ error?: string; event?: Event }>(res, 'Publication update failed');
             if (!res.ok) throw new Error(data.error || 'Publication update failed');
             setEventPageData((current) => current.map((item) => item.id === event.id ? { ...item, ...data.event } : item));
             updateEvent(event.id, { publicationStatus: action === 'approve' ? 'published' : 'draft' } as Partial<Event>);

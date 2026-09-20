@@ -7,7 +7,7 @@ import { getSession, hasEventAccess } from '@/lib/auth';
 import { ticketTokenMatches } from '@/lib/ticket-security';
 import { isPaidLikeStatus, PAID_LIKE_STATUSES } from '@/lib/ticket-lifecycle';
 import { isSecurityKeyBlocked, logSecurityEvent } from '@/lib/security-events';
-import { readCheckInPolicy } from '@/lib/checkin-policy';
+import { manualCheckInAllowed } from '@/lib/checkin-policy';
 import { readEventSettings } from '@/lib/event-settings';
 
 const ALLOWED_ROLES = ['ADMIN', 'ORGANIZER', 'ORGANISER', 'SCANNER'];
@@ -69,6 +69,12 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { ticketId, token, timedToken, deviceId, deviceName, offlineTimestamp, reason, eventId: expectedEventId } = body;
     const action = body.action || 'checkin';
+    if (!['checkin', 'manual_checkin', 'undo_checkin'].includes(action)) {
+      return NextResponse.json<CheckInResponse>(
+        { success: false, message: 'Unsupported check-in action' },
+        { status: 400 }
+      );
+    }
 
     if (!ticketId) {
       return NextResponse.json<CheckInResponse>(
@@ -125,10 +131,7 @@ export async function POST(req: NextRequest) {
 
     if (action === 'manual_checkin') {
       const config = await prisma.siteConfig.findUnique({ where: { id: 'default' }, select: { settings: true } });
-      const policy = readCheckInPolicy(config?.settings);
-      const eventSettings = readEventSettings(config?.settings, ticket.eventId);
-      const organizerApproved = policy.organizerApprovedEventIds.includes(ticket.eventId);
-      if (role !== 'ADMIN' && (!policy.manualCheckInEnabled || !eventSettings.checkIn.manualEnabled || !organizerApproved)) {
+      if (!manualCheckInAllowed(config?.settings, ticket.eventId, role)) {
         return NextResponse.json<CheckInResponse>(
           { success: false, message: 'Manual check-in is not approved for this event' },
           { status: 403 }

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
-import { getSession, hasEventAccess } from '@/lib/auth';
+import { getSession, hasEventAccess, hasRole, ORGANIZER_ROLES } from '@/lib/auth';
 import { DEFAULT_TIME_SLOTS, isValidTimeSlot, sortTimeSlots, type TimeSlot } from '@/lib/time-slots';
 
 export const dynamic = 'force-dynamic';
@@ -47,7 +47,7 @@ async function writeSettings(settings: SiteSettings) {
 
 async function requireEventAccess(eventId: string) {
   const session = await getSession();
-  return hasEventAccess(session, eventId);
+  return !!session && hasRole(session.user.role, ORGANIZER_ROLES) && hasEventAccess(session, eventId);
 }
 
 function normalizeSlot(input: unknown): TimeSlot | null {

@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { calculateDynamicPrice } from '@/lib/pricing';
-import { getSession } from '@/lib/auth';
-import { hasEventAccess } from '@/lib/auth';
+import { getSession, hasEventAccess, hasRole, ORGANIZER_ROLES } from '@/lib/auth';
 import { logAudit } from '@/lib/logger';
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -73,13 +72,11 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         const { id } = await params;
 
         // Check permissions: Admin can edit any, Organizer can only edit assigned
-        if (session.user.role === 'ORGANIZER') {
-            const assignedIds = session.user.assignedEventIds || [];
-            if (!assignedIds.includes(id)) {
-                return NextResponse.json({ error: 'Forbidden: Not assigned to this event' }, { status: 403 });
-            }
-        } else if (session.user.role !== 'ADMIN') {
+        if (!hasRole(session.user.role, ORGANIZER_ROLES)) {
             return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+        }
+        if (!hasEventAccess(session, id)) {
+            return NextResponse.json({ error: 'Forbidden: Not assigned to this event' }, { status: 403 });
         }
 
         const body = await request.json();

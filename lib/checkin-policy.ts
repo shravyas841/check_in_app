@@ -18,3 +18,15 @@ export function readCheckInPolicy(settings: unknown): CheckInPolicy {
       : [],
   };
 }
+
+export function manualCheckInAllowed(settings: unknown, eventId: string, role: string): boolean {
+  if (role === 'ADMIN') return true;
+  const policy = readCheckInPolicy(settings);
+  const eventSettings = settings && typeof settings === 'object'
+    ? (settings as { eventSettings?: Record<string, { checkIn?: { manualEnabled?: boolean } }> }).eventSettings?.[eventId]
+    : undefined;
+  const manualEnabled = eventSettings?.checkIn?.manualEnabled !== false;
+  return policy.manualCheckInEnabled
+    && manualEnabled
+    && policy.organizerApprovedEventIds.includes(eventId);
+}
