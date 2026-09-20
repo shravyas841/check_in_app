@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { calculateDynamicPrice } from '@/lib/pricing';
 import { getSession, hasEventAccess, hasRole, ORGANIZER_ROLES } from '@/lib/auth';
 import { logAudit } from '@/lib/logger';
+import { parseRegistrationFields } from '@/lib/registration-forms';
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
     try {
@@ -111,6 +112,14 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         if (updateData.prizePool !== undefined) updateData.prizePool = Number(updateData.prizePool);
         if (updateData.capacity !== undefined) updateData.capacity = Number(updateData.capacity);
         if (updateData.earlyBirdPrice !== undefined) updateData.earlyBirdPrice = Number(updateData.earlyBirdPrice);
+
+        if (body.registrationFields !== undefined) {
+            const parsedRegistrationFields = parseRegistrationFields(body.registrationFields);
+            if (parsedRegistrationFields.errors.length > 0) {
+                return NextResponse.json({ error: 'Invalid registration form', details: parsedRegistrationFields.errors }, { status: 400 });
+            }
+            updateData.registrationFields = parsedRegistrationFields.fields;
+        }
 
         const event = await prisma.event.update({
             where: { id },

@@ -3,6 +3,7 @@
 import { useApp, Event as StoreEvent } from '@/lib/store';
 import { useCallback, useState, useEffect } from 'react';
 import { useToast } from './Toaster';
+import { parseRegistrationFields, validateRegistrationAnswers, type RegistrationAnswers, type RegistrationField } from '@/lib/registration-forms';
 
 type Event = StoreEvent & { currentPrice?: number }; // allow optional dynamic price while keeping core shape
 type TicketType = { id: string; name: string; description?: string | null; price: number; capacity: number; soldCount: number; minPerOrder: number; maxPerOrder: number; availability: { available: boolean; remaining: number; reason: string | null } };
@@ -52,6 +53,56 @@ function loadRazorpayScript() {
   });
 }
 
+function RegistrationFieldInput({
+  field,
+  value,
+  onChange,
+}: {
+  field: RegistrationField;
+  value: string | boolean | undefined;
+  onChange: (value: string | boolean) => void;
+}) {
+  const className = 'w-full px-4 py-3 bg-[#0D0D0D] border border-[#2A2A2A] rounded-[10px] focus:outline-none focus:ring-2 focus:ring-[#E11D2E]/50 focus:border-[#E11D2E] text-white placeholder-[#737373]';
+  const stringValue = typeof value === 'string' ? value : '';
+
+  if (field.type === 'checkbox') {
+    return (
+      <label className="flex items-center gap-3 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={value === true}
+          onChange={(event) => onChange(event.target.checked)}
+          className="w-5 h-5 rounded border-[#2A2A2A] bg-[#0D0D0D] text-[#E11D2E] focus:ring-[#E11D2E]/50"
+        />
+        <span className="text-sm text-[#B3B3B3]">Yes, I confirm</span>
+      </label>
+    );
+  }
+
+  if (field.type === 'select') {
+    return (
+      <select value={stringValue} onChange={(event) => onChange(event.target.value)} className={`${className} appearance-none`}>
+        <option value="">Select an option</option>
+        {field.options?.map((option) => <option key={option} value={option}>{option}</option>)}
+      </select>
+    );
+  }
+
+  if (field.type === 'textarea') {
+    return <textarea value={stringValue} onChange={(event) => onChange(event.target.value)} className={className} placeholder={field.placeholder || undefined} rows={3} />;
+  }
+
+  return (
+    <input
+      type={field.type === 'phone' ? 'tel' : field.type}
+      value={stringValue}
+      onChange={(event) => onChange(event.target.value)}
+      className={className}
+      placeholder={field.placeholder || undefined}
+    />
+  );
+}
+
 export default function TicketForm() {
   const { siteSettings } = useApp();
   const [events, setEvents] = useState<Event[]>([]);
@@ -65,7 +116,7 @@ export default function TicketForm() {
     email: '',
     phone: '',
   });
-  const [answers, setAnswers] = useState<Record<string, string>>({}); // { fieldId: answer }
+  const [answersByAttendee, setAnswersByAttendee] = useState<RegistrationAnswers[]>([{}]);
   const [promoCode, setPromoCode] = useState('');
   const [discount, setDiscount] = useState<{ amount: number; type: 'percentage' | 'fixed'; code: string } | null>(null);
   const [loading, setLoading] = useState(false);
@@ -96,6 +147,11 @@ export default function TicketForm() {
       newAttendees.pop();
     }
     setAttendees(newAttendees);
+
+    const newAnswers = [...answersByAttendee];
+    while (newAnswers.length < qty) newAnswers.push({});
+    while (newAnswers.length > qty) newAnswers.pop();
+    setAnswersByAttendee(newAnswers);
   };
 
   // Update single attendee
@@ -236,6 +292,11 @@ export default function TicketForm() {
     return () => { active = false; };
   }, [selectedEvent]);
 
+  useEffect(() => {
+    if (!selectedEvent) return;
+    setAnswersByAttendee((previous) => Array.from({ length: previous.length || 1 }, () => ({})));
+  }, [selectedEvent]);
+
   const selectedEventData = events.find(e => e.id === selectedEvent);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -264,12 +325,17 @@ export default function TicketForm() {
       return;
     }
 
-    if (selectedEvt.registrationFields) {
-      for (const field of selectedEvt.registrationFields) {
-        if (field.required && (!answers[field.id] || !answers[field.id].trim())) {
-          showToast(`Please answer the required question: "${field.label}"`, 'error');
-          return;
-        }
+    const parsedRegistrationFields = parseRegistrationFields(selectedEvt.registrationFields);
+    if (parsedRegistrationFields.errors.length > 0) {
+      showToast('This event registration form is temporarily unavailable', 'error');
+      return;
+    }
+    for (let index = 0; index < attendees.length; index += 1) {
+      const answerResult = validateRegistrationAnswers(parsedRegistrationFields.fields, answersByAttendee[index] || {});
+      if (answerResult.errors.length > 0) {
+        const firstError = answerResult.errors[0];
+        showToast(`Attendee ${index + 1}: ${firstError.label || 'Registration form'} - ${firstError.message}`, 'error');
+        return;
       }
     }
 
@@ -291,15 +357,16 @@ export default function TicketForm() {
           eventId: selectedEvent,
           ticketTypeId: selectedTicketType || undefined,
           quantity,
-          attendees: attendees.map(a => ({
+          attendees: attendees.map((a, index) => ({
             name: a.name,
             email: a.email || formData.email,
             phone: a.phone || formData.phone,
+            customAnswers: answersByAttendee[index] || {},
           })),
           name: attendees[0].name,
           email: attendees[0].email || formData.email,
           phone: attendees[0].phone || formData.phone,
-          customAnswers: answers // Pass custom answers
+          customAnswers: answersByAttendee[0] || {},
         }),
       });
 
@@ -717,62 +784,29 @@ export default function TicketForm() {
                         />
                       </div>
                     )}
+
+                    {selectedEventData?.registrationFields && parseRegistrationFields(selectedEventData.registrationFields).fields.length > 0 && (
+                      <div className="pt-4 border-t border-[#1F1F1F] space-y-4">
+                        <p className="text-sm font-semibold text-[#B3B3B3]">Registration information</p>
+                        {parseRegistrationFields(selectedEventData.registrationFields).fields.map((field) => (
+                          <div key={field.id}>
+                            <label className="block text-sm text-[#B3B3B3] mb-2">
+                              {field.label} {field.required && <span className="text-[#E11D2E]">*</span>}
+                            </label>
+                            <RegistrationFieldInput
+                              field={field}
+                              value={answersByAttendee[index]?.[field.id]}
+                              onChange={(value) => setAnswersByAttendee((previous) => previous.map((answers, attendeeIndex) => attendeeIndex === index ? { ...answers, [field.id]: value } : answers))}
+                            />
+                            {field.helpText && <p className="mt-1.5 text-xs text-[#737373]">{field.helpText}</p>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
             </div>
-
-            {/* Custom Registration Questions */}
-            {selectedEventData?.registrationFields && selectedEventData.registrationFields.filter((f: any) => f.label && f.label.trim() !== '').length > 0 && (
-              <div className="space-y-4 pt-4 border-t border-[#1F1F1F]">
-                <label className="block text-sm font-semibold text-[#B3B3B3]">
-                  Additional Information
-                </label>
-                <div className="ticket-form-section bg-[#141414] border border-[#1F1F1F] rounded-xl p-5 space-y-4">
-                  {selectedEventData.registrationFields.map((field: any) => (
-                    <div key={field.id}>
-                      <label className="block text-sm text-[#B3B3B3] mb-2">
-                        {field.label} {field.required && <span className="text-[#E11D2E]">*</span>}
-                      </label>
-                      {field.type === 'text' && (
-                        <input
-                          type="text"
-                          required={field.required}
-                          value={answers[field.id] || ''}
-                          onChange={(e) => setAnswers(prev => ({ ...prev, [field.id]: e.target.value }))}
-                          className="w-full px-4 py-3 bg-[#0D0D0D] border border-[#2A2A2A] rounded-[10px] focus:outline-none focus:ring-2 focus:ring-[#E11D2E]/50 focus:border-[#E11D2E] text-white"
-                        />
-                      )}
-                      {field.type === 'checkbox' && (
-                        <label className="flex items-center gap-3 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            required={field.required}
-                            checked={answers[field.id] === 'yes'}
-                            onChange={(e) => setAnswers(prev => ({ ...prev, [field.id]: e.target.checked ? 'yes' : 'no' }))}
-                            className="w-5 h-5 rounded border-[#2A2A2A] bg-[#0D0D0D] text-[#E11D2E] focus:ring-[#E11D2E]/50"
-                          />
-                          <span className="text-sm text-[#B3B3B3]">Yes, I confirm</span>
-                        </label>
-                      )}
-                      {field.type === 'select' && (
-                        <select
-                          required={field.required}
-                          value={answers[field.id] || ''}
-                          onChange={(e) => setAnswers(prev => ({ ...prev, [field.id]: e.target.value }))}
-                          className="w-full px-4 py-3 bg-[#0D0D0D] border border-[#2A2A2A] rounded-[10px] focus:outline-none focus:ring-2 focus:ring-[#E11D2E]/50 focus:border-[#E11D2E] text-white appearance-none"
-                        >
-                          <option value="">Select an option</option>
-                          {field.options?.map((opt: string) => (
-                            <option key={opt} value={opt}>{opt}</option>
-                          ))}
-                        </select>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
 
             {/* Submit Button - Premium with Shimmer */}
             <button

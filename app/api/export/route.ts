@@ -77,7 +77,7 @@ async function exportTickets(eventId: string, event: any, format: string) {
       ticket.promoCodeId || '',
     ];
     for (const field of registrationFields) {
-      row.push(answers[field.id] || '');
+      row.push(answers[field.id] ?? '');
     }
     return row;
   });

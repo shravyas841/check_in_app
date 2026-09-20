@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import {Search, Download, Copy, Mail, Phone, User, Calendar, Send, ReceiptText, CheckSquare, Square, X, Loader2, Shield} from '@/components/icons';
 import { useToast } from '@/components/Toaster';
 import TicketActions from '@/components/TicketActions';
+import type { RegistrationField } from '@/lib/registration-forms';
 
 interface Ticket {
     id: string;
@@ -21,6 +22,8 @@ interface Ticket {
     deliveryCount?: number;
     deliveryHistory?: { id: string; channel: string; success: boolean; createdAt: string; error?: string | null }[];
     createdAt: string;
+    customAnswers?: Record<string, string | boolean>;
+    event?: { registrationFields?: RegistrationField[] };
 }
 
 interface EventAttendeesProps {
@@ -41,6 +44,7 @@ export default function EventAttendees({ eventId }: EventAttendeesProps) {
     const [cursorHistory, setCursorHistory] = useState<string[]>([]);
     const [nextCursor, setNextCursor] = useState<string | null>(null);
     const [error, setError] = useState('');
+    const [expandedAnswersId, setExpandedAnswersId] = useState<string | null>(null);
 
     const toggleSelect = (id: string) => {
         setSelected((prev) => {
@@ -366,6 +370,31 @@ export default function EventAttendees({ eventId }: EventAttendeesProps) {
                                     </span>
                                 </div>
                             </div>
+                            {ticket.customAnswers && Object.keys(ticket.customAnswers).length > 0 && (
+                                <div className="mt-3 border-t border-[#1F1F1F] pt-3">
+                                    <button
+                                        type="button"
+                                        onClick={() => setExpandedAnswersId((current) => current === ticket.id ? null : ticket.id)}
+                                        className="text-xs text-[#FF6B7A] hover:text-white"
+                                        aria-expanded={expandedAnswersId === ticket.id}
+                                    >
+                                        {expandedAnswersId === ticket.id ? 'Hide' : 'View'} registration answers
+                                    </button>
+                                    {expandedAnswersId === ticket.id && (
+                                        <div className="mt-2 grid gap-2 sm:grid-cols-2 text-xs">
+                                            {Object.entries(ticket.customAnswers).map(([fieldId, value]) => {
+                                                const field = ticket.event?.registrationFields?.find((item) => item.id === fieldId);
+                                                return (
+                                                    <div key={fieldId} className="rounded-lg bg-[#0D0D0D] border border-[#1F1F1F] px-3 py-2">
+                                                        <span className="block text-[#737373]">{field?.label || fieldId}</span>
+                                                        <span className="text-white">{typeof value === 'boolean' ? (value ? 'Yes' : 'No') : value || '—'}</span>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
                             <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_auto] border-t border-[#1F1F1F] pt-3">
                                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
                                     <div className="flex items-center gap-1 text-[#737373]">

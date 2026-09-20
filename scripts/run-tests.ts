@@ -25,6 +25,7 @@ import { calculateJobBackoffMs, nextJobStatus } from '../lib/background-jobs';
 import { getTicketTypeAvailability, quoteTicketType } from '../lib/ticket-types';
 import { normalizeRazorpayWebhook, razorpayWebhookKey } from '../lib/payment-reconciliation';
 import { scannerHealthStatus } from '../lib/scanner-operations';
+import { parseRegistrationFields, validateRegistrationAnswers } from '../lib/registration-forms';
 
 process.env.TICKET_SECRET_KEY = process.env.TICKET_SECRET_KEY || 'test-ticket-secret';
 
@@ -169,6 +170,31 @@ function testManualCheckInPolicy() {
   assert.equal(manualCheckInAllowed({}, 'event-2', 'ADMIN'), true);
 }
 
+function testRegistrationForms() {
+  const parsed = parseRegistrationFields([
+    { id: 'size', type: 'select', label: 'T-shirt size', required: true, options: ['S', 'M'] },
+    { id: 'consent', type: 'checkbox', label: 'I agree', required: true },
+    { id: 'email', type: 'email', label: 'Contact email', required: false },
+  ]);
+  assert.equal(parsed.errors.length, 0);
+  assert.equal(parsed.fields.length, 3);
+
+  const missing = validateRegistrationAnswers(parsed.fields, { size: 'M', consent: false });
+  assert.equal(missing.errors.length, 1);
+  assert.match(missing.errors[0].message, /required/i);
+
+  const invalid = validateRegistrationAnswers(parsed.fields, { size: 'XL', consent: true, email: 'not-an-email' });
+  assert.equal(invalid.errors.length, 2);
+
+  const valid = validateRegistrationAnswers(parsed.fields, { size: 'S', consent: true, email: 'person@example.com', ignored: 'drop me' });
+  assert.deepEqual(valid.errors, []);
+  assert.deepEqual(valid.answers, { size: 'S', consent: true, email: 'person@example.com' });
+
+  const invalidDefinition = parseRegistrationFields([{ id: 'bad', type: 'select', label: 'Bad', required: false, options: [] }]);
+  assert.equal(invalidDefinition.fields.length, 0);
+  assert.equal(invalidDefinition.errors.length, 1);
+}
+
 testScanPayloadParser();
 testTicketSecurity();
 testTimeSlots();
@@ -177,6 +203,7 @@ testAttendeeSegments();
 testEventTemplates();
 testReminderScheduleMath();
 testManualCheckInPolicy();
+testRegistrationForms();
 console.log('All tests passed');
 
 // ---------------------------------------------------------------------------

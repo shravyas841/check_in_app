@@ -5,6 +5,7 @@ import { calculateDynamicPrice } from '@/lib/pricing';
 import { getSession, hasEventAccess, hasRole, ORGANIZER_ROLES } from '@/lib/auth';
 import { logAudit } from '@/lib/logger';
 import { paginationMeta, parsePagination } from '@/lib/pagination';
+import { parseRegistrationFields } from '@/lib/registration-forms';
 
 export const dynamic = 'force-dynamic';
 
@@ -63,10 +64,17 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'Name and date are required' }, { status: 400 });
         }
 
+        const { registrationFields: rawRegistrationFields, ...eventInput } = rest;
+        const parsedRegistrationFields = parseRegistrationFields(rawRegistrationFields);
+        if (parsedRegistrationFields.errors.length > 0) {
+            return NextResponse.json({ error: 'Invalid registration form', details: parsedRegistrationFields.errors }, { status: 400 });
+        }
+
         const event = await prisma.event.create({
             data: {
                 id: crypto.randomUUID(),
-                ...rest,
+                ...eventInput,
+                registrationFields: parsedRegistrationFields.fields,
                 organizer: rest.organizer || session.user.name || session.user.email,
                 organizerId: session.user.id,
                 date: new Date(rest.date),
@@ -141,6 +149,14 @@ export async function PATCH(request: Request) {
         if (updateData.prizePool !== undefined) updateData.prizePool = Number(updateData.prizePool);
         if (updateData.capacity !== undefined) updateData.capacity = Number(updateData.capacity);
         if (updateData.earlyBirdPrice !== undefined) updateData.earlyBirdPrice = Number(updateData.earlyBirdPrice);
+
+        if (data.registrationFields !== undefined) {
+            const parsedRegistrationFields = parseRegistrationFields(data.registrationFields);
+            if (parsedRegistrationFields.errors.length > 0) {
+                return NextResponse.json({ error: 'Invalid registration form', details: parsedRegistrationFields.errors }, { status: 400 });
+            }
+            updateData.registrationFields = parsedRegistrationFields.fields;
+        }
 
         const event = await prisma.event.update({
             where: { id },

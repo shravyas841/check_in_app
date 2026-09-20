@@ -8,6 +8,7 @@ import { EVENT_SELECT } from '@/lib/event-select';
 import { paginationMeta, parseCursorPagination, parsePagination } from '@/lib/pagination';
 import { apiErrorResponse } from '@/lib/api-helpers';
 import { quoteTicketType } from '@/lib/ticket-types';
+import { parseRegistrationFields, validateRegistrationAnswers } from '@/lib/registration-forms';
 
 function serializeTicket(ticket: any) {
   const { Event, ...ticketData } = ticket;
@@ -35,7 +36,11 @@ export async function POST(req: NextRequest) {
     const quantity = Number(body.quantity || attendees.length || 1);
 
     // Validate required fields
-    if (attendees.length === 0 || !body.eventId || attendees.some((attendee: any) => !String(attendee.name || '').trim())) {
+    if (
+      attendees.length === 0 ||
+      !body.eventId ||
+      attendees.some((attendee: any) => !attendee || typeof attendee !== 'object' || !String(attendee.name || '').trim())
+    ) {
       return NextResponse.json(
         { error: 'Name and event are required for every ticket' },
         { status: 400 }
@@ -69,6 +74,31 @@ export async function POST(req: NextRequest) {
     }
 
     const eventName = event.name;
+    const parsedRegistrationFields = parseRegistrationFields(event.registrationFields);
+    if (parsedRegistrationFields.errors.length > 0) {
+      console.error('Event has an invalid registration form', { eventId: event.id, errors: parsedRegistrationFields.errors });
+      return NextResponse.json({ error: 'This event registration form is temporarily unavailable' }, { status: 500 });
+    }
+
+    const legacyAnswers = body.customAnswers;
+    const validatedAttendees: Array<{
+      attendeeIndex: number;
+      answerResult: ReturnType<typeof validateRegistrationAnswers>;
+    }> = attendees.map((attendee: any, attendeeIndex: number) => {
+      const answerResult = validateRegistrationAnswers(
+        parsedRegistrationFields.fields,
+        attendee && typeof attendee === 'object' && attendee.customAnswers !== undefined
+          ? attendee.customAnswers
+          : legacyAnswers,
+      );
+      return { attendeeIndex, answerResult };
+    });
+    const answerErrors = validatedAttendees.flatMap(({ attendeeIndex, answerResult }) =>
+      answerResult.errors.map((error) => ({ attendeeIndex, ...error })),
+    );
+    if (answerErrors.length > 0) {
+      return NextResponse.json({ error: 'Please complete the registration form', details: answerErrors }, { status: 400 });
+    }
     const ticketType = body.ticketTypeId ? await prisma.ticketType.findFirst({ where: { id: body.ticketTypeId, eventId: event.id } }) : null;
     if (body.ticketTypeId && !ticketType) return NextResponse.json({ error: 'Ticket type not found' }, { status: 404 });
     if (ticketType) {
@@ -114,7 +144,7 @@ export async function POST(req: NextRequest) {
     }
 
     const tickets = await prisma.$transaction(
-      attendees.map((attendee: any) => prisma.ticket.create({
+      attendees.map((attendee: any, attendeeIndex: number) => prisma.ticket.create({
         data: {
           id: crypto.randomUUID(),
           name: String(attendee.name || '').trim(),
@@ -124,7 +154,7 @@ export async function POST(req: NextRequest) {
           eventId: body.eventId,
           ticketTypeId: ticketType?.id || null,
           status: 'pending',
-          customAnswers: body.customAnswers || {},
+          customAnswers: validatedAttendees[attendeeIndex].answerResult.answers,
           updatedAt: new Date(),
         },
       }))

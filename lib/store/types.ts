@@ -1,13 +1,7 @@
 // Types-only file: pure type definitions for the store contexts.
 // Importing from here does NOT pull in the providers/reducers.
 
-export interface RegistrationField {
-    id: string;
-    type: 'text' | 'select' | 'checkbox';
-    label: string;
-    required: boolean;
-    options?: string[];
-}
+import type { RegistrationAnswers, RegistrationField } from '@/lib/registration-forms';
 
 export interface ScheduleItem {
     id: string;
@@ -65,7 +59,7 @@ export interface Event {
     earlyBirdPrice: number;
     earlyBirdDeadline: string;
     sendReminders: boolean;
-    registrationFields: any[];
+    registrationFields: RegistrationField[];
 }
 
 export interface Ticket {
@@ -89,7 +83,7 @@ export interface Ticket {
     updatedAt?: string;
     createdAt: string;
     token?: string;
-    customAnswers?: Record<string, any>;
+    customAnswers?: RegistrationAnswers;
 }
 
 export interface Review {
